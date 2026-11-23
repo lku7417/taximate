@@ -144,8 +144,6 @@ export interface MatchCandidatesResponse {
   policy: MatchPolicy;
   candidates: MatchCandidate[];
   similarSearchingCount: number;
-  /** Same origin/destination area, but departing outside my time window (nearest time first, max 20). */
-  otherTimeCandidates: MatchCandidate[];
 }
 export interface MeetingPointSuggestion {
   point: MeetingPoint;
@@ -164,7 +162,7 @@ export interface CreateRoomRequest {
   terms: RoomTerms;
   departureAt?: ISODateTime;
 }
-export interface JoinRoomRequest { tripId: UUID }
+export interface JoinRoomRequest { tripId: UUID; passengerCount?: number }
 export interface UpdatePlanRequest { meetingPoint: MeetingPoint; departureAt: ISODateTime; terms: RoomTerms }
 /** Host only, JOINABLE and non-hidden room; route failure rolls back the change. */
 export interface UpdateDestinationRequest { destination: PlaceRef }
@@ -191,6 +189,15 @@ export interface RoomSummary {
   routeDistanceMeters: number | null;  // host route length (m); null if the host trip has no route
   routeDurationSeconds: number | null; // host route driving time (s); the room map shows it like the select screen
 }
+/** Reference point → boarding spot. MEETING_POINT: the host moved the meeting point away from the room's origin. */
+export type DistanceBasis = 'MEETING_POINT' | 'ORIGIN';
+/** GET /api/rooms/open item: a RoomSummary plus its straight-line distance (not a walking distance). */
+export interface NearbyRoom extends RoomSummary {
+  distanceMeters: number; // to meetingPoint.location when set, else approxOrigin; rounded to 10 m
+  distanceBasis: DistanceBasis;
+}
+/** GET /api/rooms/open — rooms whose boarding spot is within radiusMeters, nearest first (then earliest departure). */
+export interface NearbyRooms { radiusMeters: number; rooms: NearbyRoom[]; hasMore: boolean }
 export interface Participant {
   memberId: UUID;
   nickname: string;

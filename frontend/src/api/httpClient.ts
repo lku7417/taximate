@@ -30,7 +30,7 @@ export const httpClient: ApiClient = {
   trips: { create: b => request('/trips', 'POST', b), active: () => request('/trips/active'), get: id => request(tid(id)), route: id => request(`${tid(id)}/route`, 'POST'), cancel: id => request(`${tid(id)}/cancel`, 'POST'), candidates: id => request(`${tid(id)}/candidates`) },
   rooms: {
     destination: (id, b) => request(`${rid(id)}/destination`, 'PUT', b),
-    create: b => request('/rooms', 'POST', b), open: p => request(`/rooms/open${p ? `?${query({ lat: p.lat, lng: p.lng })}` : ''}`), mine: () => request('/rooms/mine'), get: id => request(rid(id)),
+    create: b => request('/rooms', 'POST', b), open: (p, radiusMeters) => request(`/rooms/open?${query({ lat: p.lat, lng: p.lng, radiusMeters })}`), mine: () => request('/rooms/mine'), get: id => request(rid(id)),
     join: (id, b) => request(`${rid(id)}/join`, 'POST', b), leave: id => request(`${rid(id)}/leave`, 'POST'), remove: (id, mid) => request(`${rid(id)}/participants/${encodeURIComponent(mid)}/remove`, 'POST'),
     plan: (id, b) => request(`${rid(id)}/plan`, 'PUT', b), confirm: (id, b) => request(`${rid(id)}/confirm`, 'POST', b), close: id => request(`${rid(id)}/close`, 'POST'), cancel: id => request(`${rid(id)}/cancel`, 'POST'), suggestions: id => request(`${rid(id)}/meeting-point-suggestions`),
   },

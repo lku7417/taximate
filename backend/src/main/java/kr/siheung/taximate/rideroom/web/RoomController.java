@@ -15,11 +15,12 @@ public class RoomController {
     @GetMapping("/mine") public Object mine(@CurrentMember AuthenticatedMember me) { return service.mine(me.memberId()); }
     @GetMapping("/open")
     public Object open(@CurrentMember AuthenticatedMember me,
-            @RequestParam(required=false) Double lat,@RequestParam(required=false) Double lng) {
-        return service.open(me.memberId(),lat,lng);
+            @RequestParam(required=false) Double lat,@RequestParam(required=false) Double lng,
+            @RequestParam(required=false) Integer radiusMeters) {
+        return service.open(me.memberId(),lat,lng,radiusMeters);
     }
     @GetMapping("/{id}") public Object detail(@CurrentMember AuthenticatedMember me,@PathVariable UUID id) { return service.detail(id,me.memberId()); }
-    @PostMapping("/{id}/join") public Object join(@CurrentMember AuthenticatedMember me,@PathVariable UUID id,@Valid @RequestBody RoomRequests.Join r) { return locks.withLock("room:"+id,()->service.join(id,me.memberId(),r.tripId())); }
+    @PostMapping("/{id}/join") public Object join(@CurrentMember AuthenticatedMember me,@PathVariable UUID id,@Valid @RequestBody RoomRequests.Join r) { return locks.withLock("room:"+id,()->service.join(id,me.memberId(),r.tripId(),r.passengerCount())); }
     @PostMapping("/{id}/confirm") public Object confirm(@CurrentMember AuthenticatedMember me,@PathVariable UUID id,@Valid @RequestBody RoomRequests.Confirm r) { return locks.withLock("room:"+id,()->service.confirm(id,me.memberId(),r.termsVersion())); }
     @PutMapping("/{id}/plan") public Object plan(@CurrentMember AuthenticatedMember me,@PathVariable UUID id,@Valid @RequestBody RoomRequests.Plan r) { return locks.withLock("room:"+id,()->service.plan(id,me.memberId(),r)); }
     @PostMapping("/{id}/leave") public Object leave(@CurrentMember AuthenticatedMember me,@PathVariable UUID id) { return locks.withLock("room:"+id,()->service.leave(id,me.memberId())); }

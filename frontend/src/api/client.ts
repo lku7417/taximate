@@ -35,8 +35,11 @@ export interface ApiClient {
   };
   rooms: {
     create(body: C.CreateRoomRequest): Promise<C.RoomDetail>;
-    /** Joinable rooms; `near` is a one-shot GPS fix used only for this request (never stored). */
-    open(near?: C.LatLng): Promise<C.RoomSummary[]>;
+    /**
+     * Recruiting rooms whose boarding spot is within `radiusMeters` of `near` (server default when omitted).
+     * `near` is the one-shot GPS fix or a searched origin, used only for this request (never stored).
+     */
+    open(near: C.LatLng, radiusMeters?: number): Promise<C.NearbyRooms>;
     mine(): Promise<C.RoomSummary[]>;
     get(id: string): Promise<C.RoomDetail>;
     join(id: string, body: C.JoinRoomRequest): Promise<C.RoomDetail>;

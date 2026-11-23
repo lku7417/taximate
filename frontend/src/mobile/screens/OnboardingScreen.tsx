@@ -28,10 +28,9 @@ function LegalLink({ id, children }: { id: LegalDocId; children: ReactNode }) {
 }
 type Step = 'intro' | 'name' | 'age' | 'gender' | 'consent' | 'services';
 
-/** First onboarding step this member still has to do (age → gender → location → services), or null when done. */
+/** First onboarding step this member still has to do (age → location → services), or null when done. */
 function nextStep(m: Member): Step | null {
   if (!m.ageConfirmed) return 'age';
-  if (m.gender !== 'MALE' && m.gender !== 'FEMALE') return 'gender'; // rooms are same-gender only
   if (!m.locationConsent) return 'consent';
   if (!m.servicesConsent) return 'services';
   return null;
@@ -200,7 +199,7 @@ function NameStep({ leaving, onBack, onDone }: { leaving: boolean; onBack(): voi
   return (
     <form onSubmit={submit} className="flex min-h-full flex-1 flex-col px-6 pb-[max(28px,env(safe-area-inset-bottom))] pt-[max(40px,env(safe-area-inset-top))]">
       <button type="button" onClick={onBack} aria-label="뒤로" className="-ml-2 grid h-11 w-11 place-items-center rounded-full text-white/80 transition active:bg-white/10"><ChevronLeftIcon /></button>
-      <p {...rise(leaving, 0)} className={`${rise(leaving, 0).className} mt-10 short:mt-5 text-[0.9375rem] font-semibold text-sun`}>1 / 4</p>
+      <p {...rise(leaving, 0)} className={`${rise(leaving, 0).className} mt-10 short:mt-5 text-[0.9375rem] font-semibold text-sun`}>1 / 3</p>
       <h1 {...rise(leaving, 60)} className={`${rise(leaving, 60).className} mt-3 text-[2.75rem] short:text-[2.25rem] font-bold leading-[1.1] tracking-[-0.035em]`}>어떻게<br />불러드릴까요?</h1>
       <p {...rise(leaving, 120)} className={`${rise(leaving, 120).className} mt-4 text-[1.0625rem] leading-relaxed text-white/55`}>함께 탈 이웃에게 보이는 이름이에요.</p>
 
@@ -319,7 +318,7 @@ function ConsentStep({ leaving }: { leaving: boolean }) {
       {consent
         ? <button type="button" onClick={() => navigate('/')} aria-label="뒤로" className="-ml-2 grid h-11 w-11 place-items-center rounded-full text-white/80 transition active:bg-white/10"><ChevronLeftIcon /></button>
         : <div className="h-11" />}
-      <p {...rise(leaving, 0)} className={`${rise(leaving, 0).className} mt-10 short:mt-5 text-[0.9375rem] font-semibold text-sun`}>{consent ? '위치 정보 동의' : '3 / 4'}</p>
+      <p {...rise(leaving, 0)} className={`${rise(leaving, 0).className} mt-10 short:mt-5 text-[0.9375rem] font-semibold text-sun`}>{consent ? '위치 정보 동의' : '2 / 3'}</p>
       <h1 {...rise(leaving, 60)} className={`${rise(leaving, 60).className} mt-3 text-[2.75rem] short:text-[2.25rem] font-bold leading-[1.1] tracking-[-0.035em]`}>위치는<br />필요한 순간에만.</h1>
 
       <ol className="mt-10 space-y-6 short:mt-6 short:space-y-4">
@@ -413,7 +412,7 @@ function ServicesStep({ leaving }: { leaving: boolean }) {
       {agreedAt
         ? <button type="button" onClick={() => navigate('/')} aria-label="뒤로" className="-ml-2 grid h-11 w-11 place-items-center rounded-full text-white/80 transition active:bg-white/10"><ChevronLeftIcon /></button>
         : <div className="h-11" />}
-      <p {...rise(leaving, 0)} className={`${rise(leaving, 0).className} mt-10 short:mt-5 text-[0.9375rem] font-semibold text-sun`}>{agreedAt ? '외부 서비스 이용' : '4 / 4'}</p>
+      <p {...rise(leaving, 0)} className={`${rise(leaving, 0).className} mt-10 short:mt-5 text-[0.9375rem] font-semibold text-sun`}>{agreedAt ? '외부 서비스 이용' : '3 / 3'}</p>
       <h1 {...rise(leaving, 60)} className={`${rise(leaving, 60).className} mt-3 text-[2.5rem] short:text-[2.125rem] font-bold leading-[1.12] tracking-[-0.035em]`}>함께 쓰는<br />외부 서비스</h1>
       <p {...rise(leaving, 100)} className={`${rise(leaving, 100).className} mt-4 text-[0.9375rem] leading-relaxed text-white/55`}>택시메이트는 아래 서비스를 이용해 지도와 경로를 보여 드려요. 항목마다 확인하고 체크해 주세요.</p>
 

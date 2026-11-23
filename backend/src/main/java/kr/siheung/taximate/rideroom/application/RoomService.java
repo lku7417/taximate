@@ -30,8 +30,9 @@ public class RoomService implements RideRoomApi {
     private final LocationMasker masker;
     private final Clock clock;
     private final ApplicationEventPublisher events;
-    public RoomService(RoomRepository rooms,TripApi trips,IdentityApi identity,LocationMasker masker,Clock clock,ApplicationEventPublisher events) {
-        this.rooms=rooms; this.trips=trips; this.identity=identity; this.masker=masker; this.clock=clock; this.events=events;
+    private final NearbyRoomsProperties nearby;
+    public RoomService(RoomRepository rooms,TripApi trips,IdentityApi identity,LocationMasker masker,Clock clock,ApplicationEventPublisher events,NearbyRoomsProperties nearby) {
+        this.rooms=rooms; this.trips=trips; this.identity=identity; this.masker=masker; this.clock=clock; this.events=events; this.nearby=nearby;
     }
     private OffsetDateTime now() { return OffsetDateTime.now(clock); }
     private ApiException error(ErrorCode c) { return new ApiException(c,c.name()); }
@@ -73,10 +74,8 @@ public class RoomService implements RideRoomApi {
         identity.requireActive(memberId); TripIntentView t=searchable(request.sourceTripId(),memberId);
         if(t.passengerCount()>request.capacity()) throw error(ErrorCode.ROOM_FULL);
         RideRoom r=new RideRoom(); r.id=UUID.randomUUID(); r.hostMemberId=memberId; r.sourceTripId=t.id(); r.status=RoomStatus.OPEN;
-        // Every room is same-gender only (shared-taxi rule): the host's gender decides who can find and join it.
-        // request.sameGenderOnly is ignored and kept only for older clients.
-        r.sameGenderOnly=true; r.restrictedGender=identity.getGender(memberId);
-        if(!binary(r.restrictedGender)) throw error(ErrorCode.GENDER_REQUIRED);
+        // Legacy request fields are accepted for compatibility, but never create a gender restriction.
+        r.sameGenderOnly=false; r.restrictedGender=null;
         r.capacity=request.capacity(); r.departureAt=request.departureAt()==null?t.desiredDepartureAt():request.departureAt();
         r.departureWindowEnd=r.departureAt.plusMinutes(t.maxWaitMinutes());
         if(!r.departureWindowEnd.isAfter(now())) throw error(ErrorCode.VALIDATION_FAILED);
@@ -90,17 +89,16 @@ public class RoomService implements RideRoomApi {
         em.persist(r);
         add(r,memberId,t,Role.HOST); changed(r,"모집방이 만들어졌습니다"); return detail(r.id,memberId);
     }
-    private static boolean binary(Gender g) { return g==Gender.MALE || g==Gender.FEMALE; }
-    /** Same gender as the room, always. A legacy room without a recorded gender is open to no one new. */
-    private boolean eligible(RideRoom r,UUID memberId) { return r.restrictedGender!=null && r.restrictedGender==identity.getGender(memberId); }
-    public RoomDetail join(UUID id,UUID memberId,UUID tripId) {
+    public RoomDetail join(UUID id,UUID memberId,UUID tripId,Integer passengerCount) {
         RideRoom r=lock(id); identity.requireActive(memberId); RoomParticipant existing=participant(id,memberId);
         if(existing!=null && existing.status==Status.ACTIVE) return detail(id,memberId);
-        if(!binary(identity.getGender(memberId))) throw error(ErrorCode.GENDER_REQUIRED);
-        if(!eligible(r,memberId)) throw error(ErrorCode.GENDER_RESTRICTED);
         if(!RoomStatus.JOINABLE.contains(r.status) || r.hidden || !r.departureWindowEnd.isAfter(now()) || (existing!=null && existing.status==Status.REMOVED)) throw error(ErrorCode.ROOM_NOT_JOINABLE);
         TripIntentView t=searchable(tripId,memberId);
-        if(seats(r)<t.passengerCount()) throw error(ErrorCode.ROOM_FULL);
+        int party=passengerCount==null?t.passengerCount():passengerCount;
+        if(party<1 || party>3) throw new ApiException(ErrorCode.VALIDATION_FAILED,"본인을 포함해 1~3명을 선택해 주세요");
+        if(seats(r)<party) throw error(ErrorCode.ROOM_FULL);
+        // Joins the surrounding transaction: any later failure rolls the trip count back too.
+        t=trips.updatePassengerCount(tripId,memberId,party);
         add(r,memberId,t,Role.MEMBER); r.status=RoomStatus.COORDINATING;
         changed(r,identity.getMember(memberId).nickname()+"님이 참여했습니다"); return detail(id,memberId);
     }
@@ -125,8 +123,6 @@ public class RoomService implements RideRoomApi {
         if(version!=r.termsVersion) throw error(ErrorCode.TERMS_VERSION_MISMATCH);
         if(r.status==RoomStatus.CONFIRMED && Objects.equals(p.confirmedTermsVersion,version)) return detail(id,memberId);
         joinable(r); if(r.meetingPoint()==null) throw error(ErrorCode.MEETING_POINT_REQUIRED);
-        // A member whose gender changed after joining cannot confirm a ride with the other gender.
-        if(!eligible(r,memberId)) throw error(ErrorCode.GENDER_RESTRICTED);
         if(Objects.equals(p.confirmedTermsVersion,version)) return detail(id,memberId);
         p.confirmedTermsVersion=version;
         changed(r,identity.getMember(memberId).nickname()+"님이 탑승 조건을 확인했습니다");
@@ -201,7 +197,7 @@ public class RoomService implements RideRoomApi {
     }
     private RoomSummaryDto summary(RideRoom r,TripIntentView t) {
         List<RoomParticipant> a=active(r.id);
-        return new RoomSummaryDto(r.id,r.status,identity.getMember(r.hostMemberId).nickname(),masker.approximate(t.origin()==null?null:t.origin().location()),masker.approximate(t.destination()==null?null:t.destination().location()),masker.areaLabel(t.origin()),masker.areaLabel(t.destination()),r.departureAt,r.departureWindowEnd,r.capacity,r.capacity-a.stream().mapToInt(p->p.passengerCount).sum(),a.size(),r.terms(),r.meetingPoint(),t.route()==null?null:t.route().taxiFareWon(),publicName(t.origin()),publicName(t.destination()),r.sameGenderOnly,t.route()==null?null:t.route().distanceMeters(),t.route()==null?null:t.route().durationSeconds());
+        return new RoomSummaryDto(r.id,r.status,identity.getMember(r.hostMemberId).nickname(),masker.approximate(t.origin()==null?null:t.origin().location()),masker.approximate(t.destination()==null?null:t.destination().location()),masker.areaLabel(t.origin()),masker.areaLabel(t.destination()),r.departureAt,r.departureWindowEnd,r.capacity,r.capacity-a.stream().mapToInt(p->p.passengerCount).sum(),a.size(),r.terms(),r.meetingPoint(),t.route()==null?null:t.route().taxiFareWon(),publicName(t.origin()),publicName(t.destination()),false,t.route()==null?null:t.route().distanceMeters(),t.route()==null?null:t.route().durationSeconds());
     }
     private static final Set<PlaceKind> NAMED_KINDS=EnumSet.of(PlaceKind.SEARCH,PlaceKind.STATION_EXIT,PlaceKind.BUS_STOP,PlaceKind.LANDMARK);
     /** Public place/building name only (never PlaceRef.address); null for GPS/MAP_PICK or blank names. */
@@ -210,10 +206,8 @@ public class RoomService implements RideRoomApi {
     }
     public record ParticipantDto(UUID memberId,String nickname,Role role,Status status,int passengerCount,boolean confirmed,OffsetDateTime joinedAt) {}
     public RoomDetail detail(UUID id,UUID memberId) { return detail(id,memberId,false); }
-    // Leaving must remain possible after a member changes their private gender.
     private RoomDetail detail(UUID id,UUID memberId,boolean justLeft) {
         RideRoom r=room(id); List<RoomParticipant> ps=participants(id); RoomParticipant mine=ps.stream().filter(p->p.memberId.equals(memberId)&&p.status==Status.ACTIVE).findFirst().orElse(null);
-        if(mine==null && !justLeft && !eligible(r,memberId)) throw ApiException.notFound("Room");
         boolean all=active(id).size()>=2 && active(id).stream().allMatch(p->Objects.equals(p.confirmedTermsVersion,r.termsVersion));
         Map<UUID,MemberSnapshot> names=identity.getMembers(ps.stream().map(p->p.memberId).toList());
         // Non-members see only ACTIVE participants (same Participant shape, no location data); members also see LEFT/REMOVED history.
@@ -231,46 +225,78 @@ public class RoomService implements RideRoomApi {
         return em.createQuery("select r from RideRoom r, RoomParticipant p where p.roomId=r.id and p.memberId=:member and p.status=:active and (r.status in :statuses or r.closedAt>=:since) order by r.createdAt desc",RideRoom.class)
             .setParameter("member",memberId).setParameter("active",Status.ACTIVE).setParameter("statuses",RoomStatus.ACTIVE).setParameter("since",now().minusHours(24)).getResultList().stream().map(this::summary).toList();
     }
+    /** Placeholder for an empty JPQL IN list (no trip has this id). */
+    private static final UUID NO_TRIP=new UUID(0L,0L);
+    /** Within this distance a meeting point counts as the room's own origin (the default meeting point). */
+    private static final double SAME_PLACE_METERS=1.0;
+    /**
+     * Home "근처 열린 방": recruiting rooms whose boarding spot is near the caller's reference point.
+     * The boarding spot is the room's meeting point (a public place, exact) or, without one, the host origin
+     * approximated by LocationMasker, never the destination. Distances are rounded to 10 m before filtering and
+     * ordering, so the list, the map pins and the card labels agree. {@code lat}/{@code lng} are request-local
+     * (one-shot GPS fix or a searched place) and are never stored or logged.
+     */
     @Transactional(readOnly=true)
-    public List<RoomSummaryDto> open(UUID memberId,Double lat,Double lng) {
-        if((lat==null)!=(lng==null) || (lat!=null &&
-                (!Double.isFinite(lat) || !Double.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180)))
-            throw new ApiException(ErrorCode.VALIDATION_FAILED,"Provide both lat and lng in valid coordinate ranges");
-        // Bound the Java distance search to the earliest 500 eligible departures.
-        // Caller coordinates are request-local only; host locations cross the TripApi boundary.
-        List<RideRoom> eligible=em.createQuery("""
+    public NearbyRooms open(UUID memberId,Double lat,Double lng,Integer radiusMeters) {
+        if(lat==null || lng==null || !Double.isFinite(lat) || !Double.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180)
+            throw new ApiException(ErrorCode.VALIDATION_FAILED,"Provide lat and lng of the reference point in valid coordinate ranges");
+        int radius=radiusMeters==null?nearby.defaultRadiusMeters():radiusMeters;
+        if(radius < 1 || radius > nearby.maxRadiusMeters())
+            throw new ApiException(ErrorCode.VALIDATION_FAILED,"radiusMeters must be between 1 and "+nearby.maxRadiusMeters());
+        LatLng center=LatLng.of(lat,lng);
+        // A distance up to radius+5 m still rounds to the radius, so the database pre-filters use that reach.
+        double reach=radius+5;
+        // 1) Spatial filtering in the database, before any ordering or limit.
+        //    Without a meeting point the room boards at the host origin: the trip module's GiST index finds those
+        //    origins, widened by the masking error so that every masked origin in range is kept.
+        Set<UUID> hostTrips=new HashSet<>(trips.findTripIdsWithOriginWithin(center,reach+masker.approximationErrorMeters()));
+        if(hostTrips.isEmpty()) hostTrips.add(NO_TRIP);
+        //    With a meeting point the room boards there: a bounding box on the stored coordinates.
+        double dLat=Math.toDegrees(reach/GeoUtils.EARTH_RADIUS_M);
+        double dLng=dLat/Math.max(0.01,Math.cos(Math.toRadians(lat)));
+        List<RideRoom> candidates=em.createQuery("""
                 select r from RideRoom r
-                where r.status in :statuses and r.hidden=false and r.departureWindowEnd>:now
-                and r.restrictedGender=:gender
+                where r.status in :statuses and r.hidden=false and r.departureAt>:now
                 and not exists (select p.id from RoomParticipant p
                     where p.roomId=r.id and p.memberId=:member and p.status=:active)
                 and r.capacity > (select coalesce(sum(p.passengerCount),0) from RoomParticipant p
                     where p.roomId=r.id and p.status=:active)
-                order by r.departureAt,r.id
+                and ((r.meetingPointName is not null
+                        and r.meetingPointLat between :minLat and :maxLat and r.meetingPointLng between :minLng and :maxLng)
+                    or (r.meetingPointName is null and r.sourceTripId in :hostTrips))
                 """,RideRoom.class)
             .setParameter("statuses",RoomStatus.JOINABLE).setParameter("now",now())
             .setParameter("member",memberId).setParameter("active",Status.ACTIVE)
-            .setParameter("gender",identity.getGender(memberId)).setMaxResults(lat==null?10:500).getResultList();
-        if(lat==null) return eligible.stream().map(this::summary).toList();
-        LatLng caller=LatLng.of(lat,lng);
-        Map<UUID,TripIntentView> hosts=trips.getTrips(eligible.stream().map(r->r.sourceTripId).toList())
+            .setParameter("minLat",lat-dLat).setParameter("maxLat",lat+dLat)
+            .setParameter("minLng",lng-dLng).setParameter("maxLng",lng+dLng)
+            .setParameter("hostTrips",hostTrips).getResultList();
+        // 2) Exact public distance to the boarding spot, then radius, order (distance, departure, id) and limit.
+        Map<UUID,TripIntentView> hosts=trips.getTrips(candidates.stream().map(r->r.sourceTripId).toList())
             .stream().collect(Collectors.toMap(TripIntentView::id,t->t));
-        record Nearby(RideRoom room,TripIntentView trip,double distance) {}
-        return eligible.stream().filter(r->hosts.containsKey(r.sourceTripId))
+        record Nearby(RideRoom room,TripIntentView trip,int distance,String basis) {}
+        List<Nearby> matched=candidates.stream().filter(r->hosts.containsKey(r.sourceTripId))
             .map(r->{
                 TripIntentView t=hosts.get(r.sourceTripId);
-                LatLng origin=masker.approximate(t.origin()==null?null:t.origin().location());
-                return new Nearby(r,t,origin==null?Double.POSITIVE_INFINITY:GeoUtils.distanceMeters(caller,origin));
+                LatLng origin=t.origin()==null?null:t.origin().location();
+                kr.siheung.taximate.common.place.MeetingPointDto point=r.meetingPoint();
+                LatLng boarding=point!=null?point.location():masker.approximate(origin);
+                String basis=point!=null && (origin==null || GeoUtils.distanceMeters(origin,point.location())>SAME_PLACE_METERS)
+                    ?"MEETING_POINT":"ORIGIN";
+                int distance=boarding==null?Integer.MAX_VALUE:masker.roundDistance(GeoUtils.distanceMeters(center,boarding));
+                return new Nearby(r,t,distance,basis);
             })
-            .filter(n->n.distance()<=3000)
-            .sorted(Comparator.comparingDouble(Nearby::distance)
+            .filter(n->n.distance()<=radius)
+            .sorted(Comparator.comparingInt(Nearby::distance)
                 .thenComparing(n->n.room().departureAt).thenComparing(n->n.room().id))
-            .limit(10).map(n->summary(n.room(),n.trip())).toList();
+            .toList();
+        List<NearbyRooms.Room> shown=matched.stream().limit(nearby.maxResults())
+            .map(n->new NearbyRooms.Room(summary(n.room(),n.trip()),n.distance(),n.basis())).toList();
+        return new NearbyRooms(radius,shown,matched.size()>nearby.maxResults());
     }
     @Override public List<RoomMatchView> findJoinableRoomsBySourceTripIds(Collection<UUID> ids,UUID requesterMemberId) {
         if(ids.isEmpty()) return List.of();
         return em.createQuery("from RideRoom where sourceTripId in :ids and status in :statuses and hidden=false and departureWindowEnd>:now",RideRoom.class)
-            .setParameter("ids",ids).setParameter("statuses",RoomStatus.JOINABLE).setParameter("now",now()).getResultList().stream().filter(r->eligible(r,requesterMemberId)).filter(r->seats(r)>0)
+            .setParameter("ids",ids).setParameter("statuses",RoomStatus.JOINABLE).setParameter("now",now()).getResultList().stream().filter(r->seats(r)>0)
             .map(r->new RoomMatchView(r.id,r.sourceTripId,r.hostMemberId,r.status,r.capacity,seats(r),r.departureAt,r.departureWindowEnd,active(r.id).stream().map(p->p.tripId).toList(),summary(r))).toList();
     }
     @Override public Set<UUID> findTripIdsInActiveRooms(Collection<UUID> ids) {

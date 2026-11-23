@@ -37,12 +37,17 @@ public class TripService implements TripApi {
     private final ApplicationEventPublisher events;
     private final DistributedLock locks;
     private final TransactionTemplate tx;
+    private final TripSpatialQuery spatial;
     public TripService(TripRepository trips, RouteSnapshotRepository routes, IdentityApi identity, RoutePort provider,
             Clock clock, ObjectMapper mapper, RouteProperties routeProperties, PrivacyProperties privacy,
-            ApplicationEventPublisher events, DistributedLock locks, PlatformTransactionManager manager) {
+            ApplicationEventPublisher events, DistributedLock locks, PlatformTransactionManager manager,
+            TripSpatialQuery spatial) {
         this.trips=trips; this.routes=routes; this.identity=identity; this.provider=provider; this.clock=clock;
         this.mapper=mapper; this.routeProperties=routeProperties; this.privacy=privacy; this.events=events;
-        this.locks=locks; this.tx=new TransactionTemplate(manager);
+        this.locks=locks; this.tx=new TransactionTemplate(manager); this.spatial=spatial;
+    }
+    @Override public Set<UUID> findTripIdsWithOriginWithin(LatLng center, double radiusMeters) {
+        return spatial.findIdsWithOriginWithin(center, radiusMeters);
     }
     public TripResponse create(UUID memberId, CreateTripRequest request) {
         return locks.withLock("trip-member:" + memberId, () -> {
@@ -126,6 +131,17 @@ public class TripService implements TripApi {
     }
     @Override @Transactional(readOnly=true)
     public TripIntentView getTrip(UUID tripId) { return view(required(tripId, false)); }
+    @Override @Transactional
+    public TripIntentView updatePassengerCount(UUID tripId, UUID memberId, int passengerCount) {
+        if (passengerCount < 1 || passengerCount > 3)
+            throw new ApiException(ErrorCode.VALIDATION_FAILED, "본인을 포함해 1~3명을 선택해 주세요");
+        TripIntent t=owned(tripId, memberId, true);
+        if (!TripStatus.SEARCHABLE.contains(t.status) || !t.expiresAt.isAfter(now()))
+            throw new ApiException(ErrorCode.TRIP_NOT_SEARCHABLE, "종료된 이동 요청입니다");
+        identity.requireLocationConsent(memberId);
+        t.passengerCount=passengerCount; t.updatedAt=now();
+        return view(t);
+    }
     @Override @Transactional(readOnly=true)
     public TripIntentView getOwnedTrip(UUID tripId, UUID memberId) { return view(owned(tripId, memberId, false)); }
     @Override @Transactional(readOnly=true)
