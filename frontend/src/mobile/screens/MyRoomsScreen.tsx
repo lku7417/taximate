@@ -1,4 +1,3 @@
-import GenderChip from '../components/GenderChip';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api';
@@ -35,7 +34,7 @@ export default function MyRoomsScreen() {
               onClick={() => isEnded(r.status) ? toast(endedReason[r.status] ?? '끝난 방이에요.', 'info') : navigate(`/rooms/${r.id}`)}
               className={`flex w-full items-center gap-4 rounded-card p-5 text-left transition ${isEnded(r.status) ? 'opacity-60' : 'active:scale-[.99]'} ${i === 0 && ['OPEN', 'COORDINATING', 'CONFIRMED'].includes(r.status) ? 'bg-sun' : 'border border-line bg-white'}`}>
               <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2"><RoomStatusChip status={r.status} /><GenderChip enabled={r.sameGenderOnly} /><span className="text-xs text-ink/60">{formatTime(r.departureAt)}</span></div>
+                <div className="flex flex-wrap items-center gap-2"><RoomStatusChip status={r.status} /><span className="text-xs text-ink/60">{formatTime(r.departureAt)}</span></div>
                 <div className="mt-2 flex items-center gap-2">
                   <ArrowIcon size={18} className="-scale-x-100 shrink-0" />
                   <span className="truncate text-[1.125rem] font-bold tracking-tight">{destinationTitle(r)}</span>

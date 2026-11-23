@@ -4,8 +4,8 @@ import type { ErrorCode } from '../api/contract';
 export const errorMessages: Record<ErrorCode, string> = {
   KAKAO_AUTH_FAILED: '카카오 로그인에 실패했어요. 다시 시도해 주세요.',
   NICKNAME_TAKEN: '이미 사용 중이거나 사용할 수 없는 이름이에요. 다른 이름을 입력해 주세요.',
-  GENDER_REQUIRED: '택시 동승은 같은 성별끼리만 할 수 있어요. 내 정보에서 성별을 선택해 주세요.',
-  GENDER_RESTRICTED: '같은 성별끼리만 탈 수 있는 방이에요.',
+  GENDER_REQUIRED: '내 정보에서 성별을 선택해야 같은 성별만 타는 방을 만들 수 있어요.',
+  GENDER_RESTRICTED: '이 방의 참여 조건에 맞지 않아요.',
   GENDER_SOURCE_LOCKED: '카카오에서 가져온 성별은 직접 변경할 수 없어요.',
   VALIDATION_FAILED: '입력값을 확인해 주세요.',
   UNAUTHENTICATED: '로그인이 필요해요. 다시 로그인해 주세요.',
@@ -22,6 +22,7 @@ export const errorMessages: Record<ErrorCode, string> = {
   ROOM_FULL: '좌석이 모두 찼어요.',
   ROOM_READ_ONLY: '확정되었거나 종료된 방이라 변경할 수 없어요.',
   ALREADY_IN_ROOM: '이미 다른 동행방에 참여 중이에요.',
+  RIDE_IN_PROGRESS: '확정된 동행이 아직 끝나지 않았어요. 이동을 마친 뒤 ‘이동 완료’를 누르면 새 동행을 시작할 수 있어요.',
   TERMS_VERSION_MISMATCH: '약속 내용이 바뀌었어요. 새 내용을 확인하고 다시 확정해 주세요.',
   MEETING_POINT_REQUIRED: '만날 장소가 정해져야 확정할 수 있어요.',
   LOCK_TIMEOUT: '요청이 몰려 있어요. 잠시 후 다시 시도해 주세요.',

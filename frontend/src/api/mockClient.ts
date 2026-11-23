@@ -1,7 +1,8 @@
 import { ApiError, session, type ApiClient } from './client';
 import type * as C from './contract';
 import { REQUIRED_SERVICE_ITEMS } from './contract';
-import { distance, mask, mockFare, preview, roundMeters, route, routeComparison } from './geo';
+import { distance, greatCircle, mask, mockFare, preview, roundMeters, route, routeComparison } from './geo';
+import { NEARBY_ROOMS } from '../config/nearbyRooms';
 
 type Trip = { owner: string; value: C.TripIntent; endedAt?: string; demo?: boolean };
 type Room = { sameGenderOnly: boolean; restrictedGender: C.Gender | null; id: string; source: string; host: string; status: C.RoomStatus; capacity: number; terms: C.RoomTerms; departureAt: string; termsVersion: number; meetingPoint: C.MeetingPoint | null; participants: (C.Participant & { tripId: string })[]; hidden: boolean; endedAt?: string; demo?: boolean };
@@ -33,9 +34,8 @@ let state: State = (() => {
 })();
 // Upgrade persisted demos without treating missing gender as a completed choice.
 state.members.forEach(m => { m.authProvider ??= 'DEV'; m.gender ??= null; m.genderSource ??= null; m.ageConfirmed ??= false; });
-state.rooms.forEach(r => { r.sameGenderOnly ??= false; r.restrictedGender ??= null; });
-/** Every room is same-gender only; a room without a recorded gender takes no new members. */
-function eligible(r: Room, m = caller()) { return !!r.restrictedGender && r.restrictedGender === m.gender; }
+state.rooms.forEach(r => { r.sameGenderOnly = false; r.restrictedGender = null; });
+function eligible(_r: Room, _m = caller()) { return true; }
 function save() { localStorage.setItem(key, JSON.stringify(state)); }
 function member(id: string) { return state.members.find(m => m.id === id) ?? fail('NOT_FOUND'); }
 function caller(write = false) {
@@ -52,6 +52,11 @@ function room(id: string) { return state.rooms.find(r => r.id === id) ?? fail('N
 function participant(r: Room, id = caller().id) { return active(r).find(p => p.memberId === id) ?? fail('FORBIDDEN'); }
 function host(r: Room) { if (r.host !== caller(true).id) fail('FORBIDDEN'); }
 function editable(r: Room) { if (!joinable(r)) fail('ROOM_READ_ONLY'); }
+/** Mirrors taximate.rooms.lifecycle.confirmed-auto-close-minutes (application.yml). */
+const CONFIRMED_AUTO_CLOSE_MINUTES = 180;
+/** The CONFIRMED room the member is still riding in (not finished), like the backend's OngoingRides. */
+function ongoingRide(memberId: string) { return state.rooms.find(r => r.status === 'CONFIRMED' && active(r).some(p => p.memberId === memberId)); }
+function noRideInProgress(memberId: string) { if (ongoingRide(memberId)) fail('RIDE_IN_PROGRESS'); }
 function freeTrip(t: Trip) { if (state.rooms.some(r => (joinable(r) || r.status === 'CONFIRMED') && active(r).some(p => p.tripId === t.value.id))) fail('ALREADY_IN_ROOM'); }
 function changed(r: Room) { save(); emit(r.id, { type: 'ROOM_UPDATED', payload: { roomId: r.id, status: r.status, termsVersion: r.termsVersion } }); }
 function addMessage(r: Room, body: string, sender?: C.Member, clientMessageId?: string): StoredMessage {
@@ -93,6 +98,11 @@ function sweep() {
     const t = state.trips.find(t => t.value.id === r.source);
     if (!t || Date.parse(r.departureAt) + t.value.maxWaitMinutes * 60000 <= Date.now()) { r.status = 'EXPIRED'; r.endedAt = now(); changed(r); }
   }
+  // A confirmed ride nobody finished ends by itself, so it never blocks the next ride.
+  for (const r of state.rooms.filter(r => r.status === 'CONFIRMED')) {
+    const wait = state.trips.find(t => t.value.id === r.source)?.value.maxWaitMinutes ?? 15;
+    if (Date.parse(r.departureAt) + (wait + CONFIRMED_AUTO_CLOSE_MINUTES) * 60000 <= Date.now()) { r.status = 'CLOSED'; r.endedAt = now(); addMessage(r, '출발 시간이 한참 지나 동행이 자동으로 종료되었어요.'); changed(r); }
+  }
   // The demo has no background service: purge on access and while the page is open.
   state.trips = state.trips.filter(t => !t.endedAt || Date.now() - Date.parse(t.endedAt) < 86400000);
   state.messages = state.messages.filter(m => { const r = state.rooms.find(r => r.id === m.roomId); return !r?.endedAt || Date.now() - Date.parse(r.endedAt) < 30 * 86400000; });
@@ -122,7 +132,7 @@ function seed() {
     const t = makeTrip(m, { origin, destination, desiredDepartureAt: new Date(Date.now() + (5 + i) * 60000).toISOString(), maxWaitMinutes: 30, maxDetourMinutes: 15, passengerCount: 1 });
     const r = makeRoom(t, 3, { farePolicy: i === 1 ? 'DISTANCE_PRORATED' : 'EQUAL_SPLIT', luggageAllowed: i !== 2, note: '만나는 장소에서 함께 택시를 기다려요.' });
     m.gender = i % 2 ? 'MALE' : 'FEMALE'; m.genderSource = 'SELF';
-    r.sameGenderOnly = true; r.restrictedGender = m.gender;
+    r.sameGenderOnly = false; r.restrictedGender = null;
     r.demo = true;
     r.meetingPoint = { name: `${fixtures[from].name} 앞 만남 장소`, kind: 'STATION_EXIT', location: fixtures[from].location };
     addMessage(r, '동행방이 열렸어요. 약속을 확인하고 확정해 주세요.');
@@ -146,7 +156,8 @@ function summary(r: Room): C.RoomSummary {
 function detail(r: Room, justLeft = false): C.RoomDetail {
   const m = caller(), p = active(r).find(p => p.memberId === m.id);
   if (!p && !justLeft && !eligible(r,m)) fail('NOT_FOUND');
-  return { ...summary(r), myRole: p?.role ?? 'NONE', myTripId: p?.tripId ?? null, termsVersion: r.termsVersion, readOnly: !joinable(r), canJoin: !p && joinable(r) && !r.hidden && seats(r) > 0, canConfirm: !!p && !p.confirmed && joinable(r) && !!r.meetingPoint, allConfirmed: active(r).length >= 2 && active(r).every(p => p.confirmed), participants: r.participants.map(({ tripId: _tripId, ...person }) => p ? person : { ...person, memberId: '', passengerCount: 0, confirmed: false, joinedAt: '' }), routePreview: preview(state.trips.find(t => t.value.id === r.source)?.value.route?.path ?? []) };
+  const other = ongoingRide(m.id), ongoingRideRoomId = !p && other && other.id !== r.id ? other.id : null;
+  return { ...summary(r), myRole: p?.role ?? 'NONE', myTripId: p?.tripId ?? null, termsVersion: r.termsVersion, readOnly: !joinable(r), ongoingRideRoomId, canJoin: !p && !ongoingRideRoomId && joinable(r) && !r.hidden && seats(r) > 0, canConfirm: !!p && !p.confirmed && joinable(r) && !!r.meetingPoint, allConfirmed: active(r).length >= 2 && active(r).every(p => p.confirmed), participants: r.participants.map(({ tripId: _tripId, ...person }) => p ? person : { ...person, memberId: '', passengerCount: 0, confirmed: false, joinedAt: '' }), routePreview: preview(state.trips.find(t => t.value.id === r.source)?.value.route?.path ?? []) };
 }
 function checkConfirmed(r: Room) {
   if (joinable(r) && r.meetingPoint && active(r).length >= 2 && active(r).every(p => p.confirmed)) {
@@ -169,7 +180,7 @@ function validateTerms(t: C.RoomTerms) { valid(['EQUAL_SPLIT', 'DISTANCE_PRORATE
 function validatePoint(p: C.LatLng) { valid(Number.isFinite(p.lat) && Number.isFinite(p.lng) && Math.abs(p.lat) <= 90 && Math.abs(p.lng) <= 180); }
 function validateDeparture(date: string) { valid(Number.isFinite(Date.parse(date)) && Date.parse(date) >= Date.now() - 300000 && Date.parse(date) <= Date.now() + 7 * 86400000, '출발 시간은 5분 전부터 7일 이내로 선택해 주세요.'); }
 const apiCall = <T>(fn: () => T): Promise<T> => Promise.resolve().then(() => { sweep(); const result = fn(); save(); return structuredClone(result); });
-function compare(mine: C.TripIntent, other: C.TripIntent, departureAt: string, anyTime = false) {
+function compare(mine: C.TripIntent, other: C.TripIntent, departureAt: string) {
   if (!searching(other) || !other.route || !mine.route) return null;
   const origin = distance(mine.origin.location, other.origin.location), destination = distance(mine.destination.location, other.destination.location);
   const diff = (Date.parse(departureAt) - Date.parse(mine.desiredDepartureAt)) / 60000;
@@ -177,7 +188,7 @@ function compare(mine: C.TripIntent, other: C.TripIntent, departureAt: string, a
   const { cosine, overlap } = routeComparison(mine.route.path, other.route.path);
   // Contract matching: step 1 needs both ends within 500 m; then only the departure window is a hard check.
   // Direction, overlap and detour feed the score (x clamp(cosine, 0, 1)) — nearby buildings often get different car routes.
-  if (origin > 500 || destination > 500 || (!anyTime && Math.abs(diff) > Math.min(30, mine.maxWaitMinutes + other.maxWaitMinutes))) return null;
+  if (origin > 500 || destination > 500 || Math.abs(diff) > Math.min(30, mine.maxWaitMinutes + other.maxWaitMinutes)) return null;
   return { origin, destination, diff, detour, cosine, overlap: origin <= 200 && destination <= 200 ? 1 : overlap };
 }
 export const mockClient: ApiClient = {
@@ -221,7 +232,7 @@ export const mockClient: ApiClient = {
       state.members = state.members.filter(x => x.id !== m.id);
       for (const [token, id] of Object.entries(state.tokens)) if (id === m.id) delete state.tokens[token];
     }),
-    setGender: b => apiCall(() => { const m = caller(true); valid(['MALE','FEMALE'].includes(b.gender), '남성 또는 여성을 선택해 주세요.'); if (m.genderSource === 'KAKAO') fail('GENDER_SOURCE_LOCKED'); m.gender = b.gender; m.genderSource = 'SELF'; return m; }),
+    setGender: b => apiCall(() => { const m = caller(true); valid(['MALE','FEMALE','UNDISCLOSED'].includes(b.gender)); if (m.genderSource === 'KAKAO') fail('GENDER_SOURCE_LOCKED'); m.gender = b.gender; m.genderSource = 'SELF'; return m; }),
     agree: b => apiCall(() => { valid(b.policyVersion.trim()); const m = caller(true); return m.locationConsent = { id: uuid(), policyVersion: b.policyVersion, agreedAt: now() }; }),
     withdraw: () => apiCall(() => { const m = caller(); m.locationConsent = null; state.trips.filter(t => t.owner === m.id && activeTrip(t.value)).forEach(cancelTrip); }),
     agreeServices: b => apiCall(() => { valid(b.policyVersion.trim()); const items = [...new Set(b.items)]; valid(REQUIRED_SERVICE_ITEMS.every(i => items.includes(i))); const m = caller(true); return m.servicesConsent = { id: uuid(), policyVersion: b.policyVersion, items, agreedAt: now() }; }),
@@ -236,7 +247,7 @@ export const mockClient: ApiClient = {
     walk: (f, t) => apiCall(() => { caller(); validatePoint(f); validatePoint(t); const d = distance(f, t) * 1.3; return { source: 'ESTIMATE' as const, distanceMeters: Math.round(d), durationSeconds: Math.ceil(d / 1.2), path: [f, t] }; }),
   },
   trips: {
-    create: b => apiCall(() => { const m = consent(); if (state.trips.some(t => t.owner === m.id && activeTrip(t.value))) fail('ACTIVE_TRIP_EXISTS'); validatePoint(b.origin.location); validatePoint(b.destination.location); validateDeparture(b.desiredDepartureAt); valid(Number.isInteger(b.passengerCount) && b.passengerCount >= 1 && b.passengerCount <= 3); valid(Number.isInteger(b.maxWaitMinutes) && b.maxWaitMinutes >= 0 && b.maxWaitMinutes <= 60 && Number.isInteger(b.maxDetourMinutes) && b.maxDetourMinutes >= 0 && b.maxDetourMinutes <= 30); valid(distance(b.origin.location, b.destination.location) >= 50, '출발지와 도착지를 다르게 선택해 주세요.'); return makeTrip(m, b).value; }),
+    create: b => apiCall(() => { const m = consent(); noRideInProgress(m.id); if (state.trips.some(t => t.owner === m.id && activeTrip(t.value))) fail('ACTIVE_TRIP_EXISTS'); validatePoint(b.origin.location); validatePoint(b.destination.location); validateDeparture(b.desiredDepartureAt); valid(Number.isInteger(b.passengerCount) && b.passengerCount >= 1 && b.passengerCount <= 3); valid(Number.isInteger(b.maxWaitMinutes) && b.maxWaitMinutes >= 0 && b.maxWaitMinutes <= 60 && Number.isInteger(b.maxDetourMinutes) && b.maxDetourMinutes >= 0 && b.maxDetourMinutes <= 30); valid(distance(b.origin.location, b.destination.location) >= 50, '출발지와 도착지를 다르게 선택해 주세요.'); return makeTrip(m, b).value; }),
     active: () => apiCall(() => state.trips.find(t => t.owner === caller().id && activeTrip(t.value))?.value ?? null),
     get: id => apiCall(() => ownedTrip(id).value),
     route: id => apiCall(() => { consent(); const t = ownedTrip(id).value; if (!activeTrip(t)) fail('TRIP_NOT_SEARCHABLE'); t.route = route(t.origin.location, t.destination.location); t.routeError = null; t.status = 'SEARCHING'; return t; }),
@@ -245,19 +256,18 @@ export const mockClient: ApiClient = {
       consent(); const mine = ownedTrip(id).value;
       if (!searching(mine)) fail('TRIP_NOT_SEARCHABLE');
       if (!mine.route || Date.parse(mine.route.expiresAt) <= Date.now()) fail('ROUTE_EXPIRED');
-      const candidates: C.MatchCandidate[] = [], otherTimeCandidates: C.MatchCandidate[] = [];
+      const candidates: C.MatchCandidate[] = [];
       for (const r of state.rooms) {
         if (!eligible(r) || !joinable(r) || r.hidden || r.host === caller().id || seats(r) < mine.passengerCount || !member(r.host).locationConsent || member(r.host).status !== 'ACTIVE') continue;
-        const hostTrip = getTrip(r.source).value, inTime = compare(mine, hostTrip, r.departureAt), c = inTime ?? compare(mine, hostTrip, r.departureAt, true);
+        const hostTrip = getTrip(r.source).value, c = compare(mine, hostTrip, r.departureAt);
         if (!c) continue;
         const overlapRatio = Math.round(c.overlap * 100) / 100;
-        (inTime ? candidates : otherTimeCandidates).push({ roomId: r.id, tier: c.origin <= 200 ? 'NEAR' : 'EXTENDED', originDistanceMeters: roundMeters(c.origin), destinationDistanceMeters: roundMeters(c.destination), departureDiffMinutes: Math.round(c.diff), overlapRatio, estimatedDetourMinutes: c.detour, seatsLeft: seats(r), score: Math.round(100 * Math.min(1, Math.max(0, c.cosine)) * (.25 * (1 - c.origin / 500) + .15 * (1 - c.destination / 500) + .30 * c.overlap + .20 * Math.max(0, 1 - Math.abs(c.diff) / 30) + .1 * Math.max(0, 1 - c.detour / Math.max(1, mine.maxDetourMinutes)))), reasons: [`출발지 ${roundMeters(c.origin)}m`, `목적지 ${roundMeters(c.destination)}m`, `경로 ${Math.round(overlapRatio * 100)}% 겹침`, `추가 이동 약 ${c.detour}분`], room: summary(r), routePreview: preview(hostTrip.route!.path) });
+        candidates.push({ roomId: r.id, tier: c.origin <= 200 ? 'NEAR' : 'EXTENDED', originDistanceMeters: roundMeters(c.origin), destinationDistanceMeters: roundMeters(c.destination), departureDiffMinutes: Math.round(c.diff), overlapRatio, estimatedDetourMinutes: c.detour, seatsLeft: seats(r), score: Math.round(100 * Math.min(1, Math.max(0, c.cosine)) * (.25 * (1 - c.origin / 500) + .15 * (1 - c.destination / 500) + .30 * c.overlap + .20 * (1 - Math.abs(c.diff) / 30) + .1 * Math.max(0, 1 - c.detour / Math.max(1, mine.maxDetourMinutes)))), reasons: [`출발지 ${roundMeters(c.origin)}m`, `목적지 ${roundMeters(c.destination)}m`, `경로 ${Math.round(overlapRatio * 100)}% 겹침`, `추가 이동 약 ${c.detour}분`], room: summary(r), routePreview: preview(hostTrip.route!.path) });
       }
       candidates.sort((a, b) => (a.tier === b.tier ? b.score - a.score : a.tier === 'NEAR' ? -1 : 1));
-      otherTimeCandidates.sort((a, b) => Math.abs(a.departureDiffMinutes) - Math.abs(b.departureDiffMinutes));
       mine.status = candidates.length ? 'SEARCHING' : 'NO_MATCH';
       const similarSearchingCount = state.trips.filter(t => t.owner !== caller().id && member(t.owner).locationConsent && member(t.owner).status === 'ACTIVE' && t.value.status === 'SEARCHING' && !state.rooms.some(r => (joinable(r) || r.status === 'CONFIRMED') && active(r).some(p => p.tripId === t.value.id)) && compare(mine, t.value, t.value.desiredDepartureAt)).length;
-      return { tripId: id, generatedAt: now(), policy: { priorityRadiusMeters: 200, maxRadiusMeters: 500 }, candidates: candidates.slice(0, 20), similarSearchingCount, otherTimeCandidates: otherTimeCandidates.slice(0, 20) };
+      return { tripId: id, generatedAt: now(), policy: { priorityRadiusMeters: 200, maxRadiusMeters: 500 }, candidates: candidates.slice(0, 20), similarSearchingCount };
     }),
   },
   rooms: {
@@ -270,21 +280,37 @@ export const mockClient: ApiClient = {
       r.termsVersion++; active(r).forEach(p => { p.confirmed = false; });
       addMessage(r, `방장이 목적지를 ${b.destination.name || '새 장소'}(으)로 바꿨어요`); changed(r); return detail(r);
     }),
-    create: b => apiCall(() => { consent(); const t = ownedTrip(b.sourceTripId); if (!searching(t.value)) fail('TRIP_NOT_SEARCHABLE'); freeTrip(t); valid(Number.isInteger(b.capacity) && b.capacity >= 2 && b.capacity <= 4 && b.capacity >= t.value.passengerCount); validateTerms(b.terms); if (b.departureAt) validateDeparture(b.departureAt); if (!['MALE','FEMALE'].includes(caller().gender ?? '')) fail('GENDER_REQUIRED'); const r = makeRoom(t, b.capacity, b.terms, b.departureAt, true); addMessage(r, '동행방을 만들었어요. 만날 장소를 정해 주세요.'); return detail(r); }),
-    open: near => apiCall(() => {
-      const m = caller(); if (near) validatePoint(near);
-      const list = state.rooms.filter(r => eligible(r,m) && joinable(r) && !r.hidden && seats(r) > 0 && !active(r).some(p => p.memberId === m.id)).map(summary).filter(r => Date.parse(r.departureWindowEnd) > Date.now());
-      if (!near) return list.sort((a, b) => Date.parse(a.departureAt) - Date.parse(b.departureAt)).slice(0, 10);
-      return list.map(r => ({ r, d: distance(r.approxOrigin, near) })).filter(x => x.d <= 3000).sort((a, b) => a.d - b.d).slice(0, 10).map(x => x.r);
+    create: b => apiCall(() => { const m = consent(); const t = ownedTrip(b.sourceTripId); if (!searching(t.value)) fail('TRIP_NOT_SEARCHABLE'); freeTrip(t); noRideInProgress(m.id); valid(Number.isInteger(b.capacity) && b.capacity >= 2 && b.capacity <= 4 && b.capacity >= t.value.passengerCount); validateTerms(b.terms); if (b.departureAt) validateDeparture(b.departureAt); const r = makeRoom(t, b.capacity, b.terms, b.departureAt, false); addMessage(r, '동행방을 만들었어요. 만날 장소를 정해 주세요.'); return detail(r); }),
+    open: (near, radiusMeters = NEARBY_ROOMS.defaultRadiusMeters) => apiCall((): C.NearbyRooms => {
+      // Same rules as GET /api/rooms/open: the reference point is required and used for this call only.
+      const m = caller(); valid(near, '기준 위치가 필요해요.'); validatePoint(near);
+      valid(Number.isInteger(radiusMeters) && radiusMeters >= 1 && radiusMeters <= NEARBY_ROOMS.mock.maxRadiusMeters);
+      const matched = state.rooms
+        .filter(r => eligible(r, m) && joinable(r) && !r.hidden && seats(r) > 0 && Date.parse(r.departureAt) > Date.now() && !active(r).some(p => p.memberId === m.id))
+        .flatMap(r => {
+          const origin = state.trips.find(t => t.value.id === r.source)?.value.origin.location;
+          if (!origin) return [];
+          // Boarding spot: the public meeting point, else the masked host origin — never the destination.
+          const point = r.meetingPoint?.location ?? mask(origin);
+          const distanceBasis: C.DistanceBasis = r.meetingPoint && greatCircle(origin, r.meetingPoint.location) > 1 ? 'MEETING_POINT' : 'ORIGIN';
+          return [{ r, distanceMeters: roundMeters(greatCircle(near, point)), distanceBasis }];
+        })
+        .filter(x => x.distanceMeters <= radiusMeters)
+        .sort((a, b) => a.distanceMeters - b.distanceMeters || Date.parse(a.r.departureAt) - Date.parse(b.r.departureAt) || (a.r.id < b.r.id ? -1 : 1));
+      const max = NEARBY_ROOMS.mock.maxResults;
+      return { radiusMeters, hasMore: matched.length > max, rooms: matched.slice(0, max).map(x => ({ ...summary(x.r), distanceMeters: x.distanceMeters, distanceBasis: x.distanceBasis })) };
     }),
     mine: () => apiCall(() => state.rooms.filter(r => active(r).some(p => p.memberId === caller().id) && (!r.endedAt || Date.now() - Date.parse(r.endedAt) <= 86400000)).map(summary).reverse()),
     get: id => apiCall(() => { caller(); return detail(room(id)); }),
     join: (id, b) => apiCall(() => {
       const m = consent(), r = room(id);
       if (active(r).some(p => p.memberId === m.id)) return detail(r);
-      if (!eligible(r,m)) fail('GENDER_RESTRICTED');
       if (!joinable(r) || r.hidden) fail('ROOM_NOT_JOINABLE');
-      const t = ownedTrip(b.tripId); if (!searching(t.value)) fail('TRIP_NOT_SEARCHABLE'); freeTrip(t); if (seats(r) < t.value.passengerCount) fail('ROOM_FULL');
+      const t = ownedTrip(b.tripId); if (!searching(t.value)) fail('TRIP_NOT_SEARCHABLE'); freeTrip(t); noRideInProgress(m.id);
+      const count = b.passengerCount ?? t.value.passengerCount;
+      valid(Number.isInteger(count) && count >= 1 && count <= 3, '함께 탈 인원은 본인을 포함해 1~3명이에요.');
+      if (seats(r) < count) fail('ROOM_FULL');
+      t.value.passengerCount = count;
       r.participants = r.participants.filter(p => p.memberId !== m.id);
       r.participants.push({ memberId: m.id, nickname: m.nickname, role: 'MEMBER', status: 'ACTIVE', passengerCount: t.value.passengerCount, confirmed: false, joinedAt: now(), tripId: b.tripId }); r.status = 'COORDINATING';
       addMessage(r, `${m.nickname}님이 참여했어요.`); changed(r);
@@ -296,6 +322,16 @@ export const mockClient: ApiClient = {
     plan: (id, b) => apiCall(() => { const r = room(id); host(r); editable(r); validateTerms(b.terms); validatePoint(b.meetingPoint.location); valid(b.meetingPoint.name.trim()); validateDeparture(b.departureAt); r.meetingPoint = b.meetingPoint; r.departureAt = b.departureAt; r.terms = b.terms; r.termsVersion++; active(r).forEach(p => { p.confirmed = false; }); addMessage(r, `약속이 변경되었어요 (버전 ${r.termsVersion}). 다시 확정해 주세요.`); changed(r); return detail(r); }),
     confirm: (id, b) => apiCall(() => { consent(); const r = room(id), p = participant(r); if (b.termsVersion !== r.termsVersion) fail('TERMS_VERSION_MISMATCH'); if (p.confirmed) return detail(r); editable(r); if (!r.meetingPoint) fail('MEETING_POINT_REQUIRED'); p.confirmed = true; checkConfirmed(r); simulateConfirm(r); return detail(r); }),
     close: id => apiCall(() => { const r = room(id); host(r); if (r.status !== 'CONFIRMED') fail('ROOM_NOT_JOINABLE'); r.status = 'CLOSED'; r.endedAt = now(); changed(r); return detail(r); }),
+    finish: id => apiCall(() => {
+      // 이동 완료: same rules as POST /api/rooms/{id}/finish. The host finishing closes the room for everyone.
+      const m = caller(), r = room(id);
+      if (['CLOSED', 'CANCELLED', 'EXPIRED'].includes(r.status) && r.participants.some(p => p.memberId === m.id)) return detail(r, true);
+      const p = participant(r);
+      if (r.status !== 'CONFIRMED') fail('ROOM_NOT_JOINABLE');
+      if (p.role === 'HOST') { r.status = 'CLOSED'; r.endedAt = now(); addMessage(r, '동승이 종료되었어요.'); changed(r); return detail(r); }
+      p.status = 'FINISHED'; addMessage(r, `${p.nickname}님이 이동을 마쳤어요.`); changed(r);
+      return detail(r, true);
+    }),
     cancel: id => apiCall(() => { const r = room(id); host(r); editable(r); r.status = 'CANCELLED'; r.endedAt = now(); changed(r); return detail(r); }),
     suggestions: id => apiCall(() => {
       const r = room(id); participant(r);
