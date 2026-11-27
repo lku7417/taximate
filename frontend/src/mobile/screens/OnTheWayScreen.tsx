@@ -1,4 +1,8 @@
 import GenderChip from '../components/GenderChip';
+<<<<<<< ours
+=======
+import GenderSafetyNotice from '../components/GenderSafetyNotice';
+>>>>>>> theirs
 import PassengerCount from '../components/PassengerCount';
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode, type PointerEvent as ReactPointerEvent } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -39,7 +43,7 @@ export default function OnTheWayScreen() {
 function OnTheWay({ id, moderation }: { id: string; moderation: boolean }) {
   const navigate = useNavigate();
   const map = useMap();
-  const { member, toast } = useApp();
+  const { member, toast, askConfirm } = useApp();
   const onError = useErrorHandler();
   const { busy, run } = useAction();
   const { shown, close } = useSlideIn(() => navigate('/', { replace: true }), 420);
@@ -232,9 +236,17 @@ function OnTheWay({ id, moderation }: { id: string; moderation: boolean }) {
     return updated;
   };
   const leave = async () => {
-    if (!window.confirm('이 방에서 나갈까요?')) return;
+    if (!(await askConfirm({ title: '이 방에서 나갈까요?', confirmText: '나가기' }))) return;
     selfExit.current = true;
     if (await act(() => api.rooms.leave(room.id), '방에서 나왔어요.')) close();
+    else selfExit.current = false;
+  };
+  /** 이동 완료 (members): end my confirmed ride; the room leaves "현재 내 방" and a new ride can start. */
+  const finishRide = async () => {
+    if (!(await askConfirm({ title: '이동을 마쳤나요?', message: '이 동행이 현재 내 방에서 빠지고, 새 동행을 시작할 수 있어요.', confirmText: '이동 완료' }))) return;
+    selfExit.current = true;
+    if (await act(() => api.rooms.finish(room.id), '이동을 마쳤어요. 함께해 주셔서 고마워요!')) close();
+    else selfExit.current = false;
   };
   /** 이동 완료 (members): end my confirmed ride; the room leaves "현재 내 방" and a new ride can start. */
   const finishRide = async () => {
@@ -244,9 +256,15 @@ function OnTheWay({ id, moderation }: { id: string; moderation: boolean }) {
     else selfExit.current = false;
   };
   const cancelRoom = async () => {
-    if (!window.confirm('방을 취소할까요? 참여자 모두에게 취소가 알려져요.')) return;
+    if (!(await askConfirm({ title: '방을 취소할까요?', message: '참여자 모두에게 취소가 알려져요.', confirmText: '방 취소', cancelText: '닫기', danger: true }))) return;
     selfExit.current = true;
     if (!(await act(() => api.rooms.cancel(room.id), '방을 취소했어요.'))) selfExit.current = false;
+  };
+  /** 이동 완료 · 방 닫기 (host): closes the whole confirmed room. */
+  const closeRoom = async () => {
+    if (!(await askConfirm({ title: '이동을 마치고 방을 닫을까요?', message: '방이 종료되고, 새 동행을 시작할 수 있어요.', confirmText: '방 닫기' }))) return;
+    selfExit.current = true;
+    if (!(await act(() => api.rooms.close(room.id), '방을 닫았어요. 함께해 주셔서 고마워요!'))) selfExit.current = false;
   };
   const join = async () => {
     if (!joinTrip) return;
@@ -321,10 +339,7 @@ function OnTheWay({ id, moderation }: { id: string; moderation: boolean }) {
             <button type="button" className="btn-ink mt-4 w-full" disabled={busy} onClick={finishRide}>이동 완료</button>
           )}
           {isHost && room.status === 'CONFIRMED' && (
-            <button type="button" className="btn-ink mt-4 w-full" disabled={busy}
-              onClick={() => { if (window.confirm('이동을 마치고 방을 닫을까요?')) { selfExit.current = true; void act(() => api.rooms.close(room.id), '방을 닫았어요. 함께해 주셔서 고마워요!').then(r => { if (!r) selfExit.current = false; }); } }}>
-              이동 완료 · 방 닫기
-            </button>
+            <button type="button" className="btn-ink mt-4 w-full" disabled={busy} onClick={closeRoom}>이동 완료 · 방 닫기</button>
           )}
         </div>
       </section>
@@ -342,7 +357,7 @@ function RideInfo({ room, myId, busy, onAct, onReload, onEdit, onReport, joinTri
   party: number; onParty(n: number): void;
   onAct(fn: () => Promise<RoomDetail>, done?: string): Promise<RoomDetail | undefined>; onReload(): void; onEdit(): void; onReport(t: ReportTarget): void; onJoin(): void;
 }) {
-  const { toast } = useApp();
+  const { toast, askConfirm } = useApp();
   const onError = useErrorHandler();
   const { run } = useAction();
   const isMember = room.myRole !== 'NONE';
@@ -363,8 +378,8 @@ function RideInfo({ room, myId, busy, onAct, onReload, onEdit, onReport, joinTri
       onError(error);
     }
   };
-  const remove = (memberId: string, nickname: string) => {
-    if (window.confirm(`${nickname}님을 방에서 내보낼까요?`)) void onAct(() => api.rooms.remove(room.id, memberId));
+  const remove = async (memberId: string, nickname: string) => {
+    if (await askConfirm({ title: `${nickname}님을 방에서 내보낼까요?`, confirmText: '내보내기', danger: true })) void onAct(() => api.rooms.remove(room.id, memberId));
   };
   const addDemo = async () => {
     await run(async () => { const mock = await import('../../api/mockClient'); await mock.addDemoParticipant(room.id); });
@@ -430,7 +445,7 @@ function RideInfo({ room, myId, busy, onAct, onReload, onEdit, onReport, joinTri
                   {p.nickname}{p.memberId === myId && <span className="text-mute"> (나)</span>}{p.role === 'HOST' && <span className="text-xs text-mute"> · 방장</span>}{p.passengerCount > 1 && <span className="text-xs text-mute"> · 일행 포함 {p.passengerCount}명</span>}
                 </span>
                 {p.confirmed ? <span className="chip bg-ink text-sun"><CheckIcon size={14} className="mr-0.5" />확정</span> : <span className="chip">대기</span>}
-                {isHost && joinable && p.role !== 'HOST' && p.memberId && <button type="button" className="text-xs font-semibold text-mute" onClick={() => remove(p.memberId, p.nickname)}>내보내기</button>}
+                {isHost && joinable && p.role !== 'HOST' && p.memberId && <button type="button" className="text-xs font-semibold text-mute" onClick={() => void remove(p.memberId, p.nickname)}>내보내기</button>}
                 {p.memberId && p.memberId !== myId && <button type="button" className="text-xs text-mute" onClick={() => onReport({ type: 'MEMBER', id: p.memberId, preview: p.nickname })}>신고</button>}
               </li>
             ))}
@@ -463,7 +478,11 @@ function RideInfo({ room, myId, busy, onAct, onReload, onEdit, onReport, joinTri
             </div>
           : room.canJoin
           ? joinTrip
+<<<<<<< ours
             ? <div className="space-y-3"><PassengerCount value={party} max={room.seatsLeft} onChange={onParty} disabled={busy} /><button type="button" className="btn-ink w-full" disabled={busy || party > room.seatsLeft} onClick={onJoin}>{party}명 함께 합류하기</button></div>
+=======
+            ? <div className="space-y-3"><PassengerCount value={party} max={room.seatsLeft} onChange={onParty} disabled={busy} /><GenderSafetyNotice compact /><button type="button" className="btn-ink w-full" disabled={busy || party > room.seatsLeft} onClick={onJoin}>{party}명 함께 합류하기</button></div>
+>>>>>>> theirs
             : <Notice>참여하려면 홈에서 출발지와 도착지를 먼저 검색해 주세요.</Notice>
           : <Notice>{roomStatusInfo[room.status].desc}</Notice>
       )}

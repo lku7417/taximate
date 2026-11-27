@@ -291,7 +291,7 @@ const POINTS: [string, string][] = [
 ];
 
 function ConsentStep({ leaving }: { leaving: boolean }) {
-  const { member, refreshMember, toast } = useApp();
+  const { member, refreshMember, toast, askConfirm } = useApp();
   const { busy, run } = useAction();
   const navigate = useNavigate();
   const location = useLocation();
@@ -307,7 +307,7 @@ function ConsentStep({ leaving }: { leaving: boolean }) {
     else navigate(next, { replace: true });
   };
   const withdraw = async () => {
-    if (!window.confirm('동의를 철회하면 진행 중인 이동이 취소되고, 동행을 찾을 수 없어요. 철회할까요?')) return;
+    if (!(await askConfirm({ title: '위치 정보 이용 동의를 철회할까요?', message: '동의를 철회하면 진행 중인 이동이 취소되고, 동행을 찾을 수 없어요.', confirmText: '철회하기', danger: true }))) return;
     const done = await run(async () => { await api.identity.withdraw(); return true; });
     if (!done) return;
     await refreshMember();
@@ -380,7 +380,7 @@ function Check({ on }: { on: boolean }) {
 }
 
 function ServicesStep({ leaving }: { leaving: boolean }) {
-  const { member, refreshMember, toast } = useApp();
+  const { member, refreshMember, toast, askConfirm } = useApp();
   const { busy, run } = useAction();
   const navigate = useNavigate();
   const location = useLocation();
@@ -400,7 +400,7 @@ function ServicesStep({ leaving }: { leaving: boolean }) {
     navigate(from && !['/consent', '/start', '/services'].includes(from) ? from : '/', { replace: true });
   };
   const withdraw = async () => {
-    if (!window.confirm('외부 서비스 이용 동의를 철회하면 지도와 경로 기능을 쓸 수 없어요. 철회할까요?')) return;
+    if (!(await askConfirm({ title: '외부 서비스 이용 동의를 철회할까요?', message: '동의를 철회하면 지도와 경로 기능을 쓸 수 없어요.', confirmText: '철회하기', danger: true }))) return;
     const done = await run(async () => { await api.identity.withdrawServices(); return true; });
     if (!done) return;
     await refreshMember();

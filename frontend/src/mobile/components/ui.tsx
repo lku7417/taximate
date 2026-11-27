@@ -56,6 +56,43 @@ export function Sheet({ title, onClose, children, tall = false }: { title: strin
   );
 }
 
+export interface ConfirmOptions { title: string; message?: ReactNode; confirmText?: string; cancelText?: string; danger?: boolean }
+
+/**
+ * In-app yes/no sheet. Replaces window.confirm(), which some browsers and in-app webviews block
+ * (it then returns false at once, so the action silently never runs).
+ */
+export function ConfirmSheet({ title, message, confirmText = '확인', cancelText = '취소', danger = false, onAnswer, onClosed }: ConfirmOptions & { onAnswer(ok: boolean): void; onClosed(): void }) {
+  const { shown, close } = useSlideIn(onClosed);
+  const answered = useRef(false);
+  const answer = useCallback((ok: boolean) => {
+    if (!answered.current) { answered.current = true; onAnswer(ok); }
+    close();
+  }, [onAnswer, close]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') answer(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [answer]);
+  return (
+    <FramePortal>
+      <div className={`absolute inset-0 z-[55] flex items-end bg-black/40 transition-opacity duration-300 ${shown ? 'opacity-100' : 'opacity-0'}`} onClick={() => answer(false)}>
+        <div role="alertdialog" aria-modal="true" aria-labelledby="confirm-sheet-title"
+          className={`ease-sheet w-full rounded-t-sheet bg-white px-6 pb-[max(24px,env(safe-area-inset-bottom))] shadow-sheet transition-transform duration-300 ${shown ? 'translate-y-0' : 'translate-y-full'}`}
+          onClick={e => e.stopPropagation()}>
+          <div className="mx-auto mt-3 h-1 w-10 rounded-full bg-line" />
+          <h2 id="confirm-sheet-title" className="pt-5 text-[1.25rem] font-bold leading-snug tracking-tight">{title}</h2>
+          {message && <div className="mt-2 text-[0.9375rem] leading-relaxed text-mute-dark">{message}</div>}
+          <div className="mt-6 grid grid-cols-2 gap-2">
+            <button type="button" className="btn-fog" onClick={() => answer(false)}>{cancelText}</button>
+            <button type="button" className={danger ? 'btn bg-[#B3261E] text-white' : 'btn-ink'} onClick={() => answer(true)}>{confirmText}</button>
+          </div>
+        </div>
+      </div>
+    </FramePortal>
+  );
+}
+
 export function Spinner({ text, dark = false }: { text?: string; dark?: boolean }) {
   return (
     <div className="flex flex-col items-center justify-center gap-3 py-8 text-center">

@@ -1,4 +1,8 @@
 import GenderChip from '../components/GenderChip';
+<<<<<<< ours
+=======
+import GenderSafetyNotice from '../components/GenderSafetyNotice';
+>>>>>>> theirs
 import PassengerCount from '../components/PassengerCount';
 import SavedDestinations from '../components/SavedDestinations';
 import { useSavedPlaces } from '../../lib/savedPlaces';
@@ -737,6 +741,7 @@ function CreateArea({ trip, candidates, onOpen, departureText, busy, onCancel, o
         </div>
         <div className="mt-2"><Toggle checked={luggage} onChange={setLuggage} label="큰 짐(캐리어 등) 괜찮아요" /></div>
         <p className="mt-2 rounded-card border border-line px-4 py-3 text-[0.8125rem] leading-relaxed text-mute-dark">택시 동승은 같은 성별끼리만 할 수 있어요. 이 방은 나와 같은 성별의 이웃에게만 보이고, 그분들만 참여할 수 있어요.</p>
+        <div className="mt-2"><GenderSafetyNotice compact /></div>
         <div className="mt-2 rounded-card border border-line px-4 py-3">
           <div className="flex items-center gap-3 text-[0.9375rem]">
             <PersonIcon size={20} className="shrink-0 text-mute" />
@@ -800,6 +805,10 @@ function RoomIntro({ candidate, trip, busy, otherTime, departureText, party, onP
           <Info label="큰 짐">{r.terms.luggageAllowed ? '괜찮아요' : '어려워요'}</Info>
         </dl>
         <div className="mt-3"><PassengerCount value={party} max={r.seatsLeft} onChange={onParty} disabled={busy} /></div>
+<<<<<<< ours
+=======
+        <div className="mt-3"><GenderSafetyNotice compact /></div>
+>>>>>>> theirs
         <p className="mt-4 pb-4 text-xs leading-relaxed text-mute">{FARE_DISCLAIMER}</p>
       </div>
       <div className="relative shrink-0 px-6 pt-3">
@@ -877,6 +886,10 @@ function RoomPreview({ room: summary, detail, walk, busy, party, onParty, onClos
         </div>
         <div className="mt-3"><PassengerCount value={party} max={r.seatsLeft} onChange={onParty} disabled={busy} /></div>
         <p className="mt-2 text-xs text-mute">합류 후 {riders(r) + party}명 · 1인 예상 {high != null ? formatWon(high) : '정보 없음'}</p>
+<<<<<<< ours
+=======
+        <div className="mt-3"><GenderSafetyNotice compact /></div>
+>>>>>>> theirs
         </div>
         <div className="mt-auto flex shrink-0 gap-3 pt-3">
           <button type="button" className="btn-fog flex-1" onClick={onCancelWalk} disabled={busy}>취소</button>

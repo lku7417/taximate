@@ -4,6 +4,7 @@ import { api } from '../api';
 import { session } from '../api/client';
 import type { Member } from '../api/contract';
 import { describeError, isApiError } from './errors';
+import { ConfirmSheet, type ConfirmOptions } from '../mobile/components/ui';
 
 type Toast = { id: number; text: string; tone: 'error' | 'info' };
 interface AppState {
@@ -13,6 +14,8 @@ interface AppState {
   refreshMember(): Promise<Member | null>;
   logout(): void;
   toast(text: string, tone?: Toast['tone']): void;
+  /** In-app confirmation (never window.confirm, which some webviews block): resolves true only on the confirm button. */
+  askConfirm(options: ConfirmOptions): Promise<boolean>;
 }
 const AppContext = createContext<AppState | null>(null);
 
@@ -21,12 +24,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(!!session.get());
   const [toasts, setToasts] = useState<Toast[]>([]);
   const seq = useRef(0);
+  const [asking, setAsking] = useState<(ConfirmOptions & { id: number; resolve(ok: boolean): void }) | null>(null);
+  const pending = useRef<((ok: boolean) => void) | null>(null);
 
   const toast = useCallback((text: string, tone: Toast['tone'] = 'error') => {
     const id = ++seq.current;
     setToasts(list => [...list.filter(t => t.text !== text), { id, text, tone }]);
     setTimeout(() => setToasts(list => list.filter(t => t.id !== id)), 3500);
   }, []);
+
+  const askConfirm = useCallback((options: ConfirmOptions) => new Promise<boolean>(resolve => {
+    pending.current?.(false); // a newer question cancels an unanswered one
+    pending.current = resolve;
+    setAsking({ ...options, id: ++seq.current, resolve });
+  }), []);
 
   const refreshMember = useCallback(async () => {
     if (!session.get()) { setMember(null); return null; }
@@ -44,10 +55,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => { session.clear(); setMember(null); }, []);
 
-  const value = useMemo(() => ({ member, loading, setMember, refreshMember, logout, toast }), [member, loading, refreshMember, logout, toast]);
+  const value = useMemo(() => ({ member, loading, setMember, refreshMember, logout, toast, askConfirm }), [member, loading, refreshMember, logout, toast, askConfirm]);
   return (
     <AppContext.Provider value={value}>
       {children}
+      {asking && (
+        <ConfirmSheet key={asking.id} {...asking}
+          onAnswer={ok => { if (pending.current === asking.resolve) pending.current = null; asking.resolve(ok); }}
+          onClosed={() => setAsking(current => (current?.id === asking.id ? null : current))} />
+      )}
       <div className="pointer-events-none absolute inset-x-0 top-[max(16px,env(safe-area-inset-top))] z-[60] flex flex-col items-center gap-2 px-4" aria-live="polite">
         {toasts.map(t => (
           <div key={t.id} role="status" className="animate-pop flex max-w-full items-center gap-2 rounded-full bg-ink px-4 py-3 text-sm font-medium text-white shadow-float">

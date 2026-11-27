@@ -72,7 +72,7 @@ function Tile({ label, value, highlight = false }: { label: string; value: numbe
 }
 
 function ReportCard({ report, onDone }: { report: Report; onDone(): void }) {
-  const { toast } = useApp();
+  const { toast, askConfirm } = useApp();
   const navigate = useNavigate();
   const { busy, run } = useAction();
   const [note, setNote] = useState('');
@@ -82,7 +82,7 @@ function ReportCard({ report, onDone }: { report: Report; onDone(): void }) {
     'RESTRICT_MEMBER', 'DISMISS',
   ];
   const act = async (action: ModerationAction) => {
-    if (action !== 'DISMISS' && !window.confirm(`“${ACTION_LABEL[action]}” 조치를 할까요?`)) return;
+    if (action !== 'DISMISS' && !(await askConfirm({ title: `“${ACTION_LABEL[action]}” 조치를 할까요?`, confirmText: ACTION_LABEL[action] }))) return;
     const done = await run(() => api.admin.action(report.id, { action, note: note.trim() || null }));
     if (done) { toast(`${ACTION_LABEL[action]} 처리했어요.`, 'info'); onDone(); }
   };

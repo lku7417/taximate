@@ -5,6 +5,7 @@ import type { Gender, Member } from '../../api/contract';
 import { useAction, useApp } from '../../lib/app';
 import { demoPrefix, nicknameValid, stripPrefix, useAuthOptions, withPrefix } from '../../lib/authOptions';
 import { kakaoPendingName } from '../../lib/kakaoLogin';
+import GenderSafetyNotice from '../components/GenderSafetyNotice';
 import { Notice, Sheet } from '../components/ui';
 import { clearSavedPlaces } from '../../lib/savedPlaces';
 
@@ -59,6 +60,7 @@ export default function GenderStep({ onDone, profile = false }: { onDone?(member
         </button>)}
     </div>
     {locked && <p className="mt-4 text-sm text-white/60">카카오에서 가져온 성별은 여기서 변경할 수 없어요.</p>}
+    <div className="my-5"><GenderSafetyNotice dark /></div>
     <button type="button" disabled={!gender || busy || locked} onClick={save} className="btn-sun mt-auto w-full shrink-0 translate-y-0">{busy ? '저장하는 중…' : profile ? '저장하기' : '계속'}</button>
     {profile && <button type="button" onClick={() => setWithdrawing(true)} className="mx-auto mt-5 shrink-0 py-2 text-[0.8125rem] text-white/40 underline underline-offset-4">회원 탈퇴</button>}
     </div>
